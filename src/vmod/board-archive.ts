@@ -41,6 +41,10 @@ function fromBoardMetadata(archive: ModuleArchive, fallbackName: string): BoardA
     const n = v == null ? NaN : Number.parseFloat(v);
     return Number.isFinite(n) ? n : dflt;
   };
+  const bool = (attr: string, dflt: boolean): boolean => {
+    const v = root.getAttribute(attr);
+    return v == null ? dflt : v === "true" || v === "TRUE";
+  };
   const geo = geoGridDef();
   const grid: HexGridDef = {
     dx: num("hexWidth", geo.dx),
@@ -49,6 +53,9 @@ function fromBoardMetadata(archive: ModuleArchive, fallbackName: string): BoardA
     originY: num("A1CenterY", geo.originY),
     alternate: root.getAttribute("altHexGrain") === "TRUE" || root.getAttribute("altHexGrain") === "true",
     snapScale: num("snapScale", 0),
+    snapTo: bool("snapTo", true),
+    edgesLegal: bool("edgesLegal", false),
+    cornersLegal: bool("cornersLegal", false),
   };
   // A1CenterX=-901 / A1CenterY=-612.75 are sentinel values on half-board
   // variants (BoardArchive "b board"/"DW board" tests); the real origin there
@@ -87,6 +94,9 @@ function fromLegacyData(archive: ModuleArchive, fallbackName: string): BoardArch
       originY: num("y0", geo.originY),
       alternate: (attrs.get("althexgrain") ?? "") === "true",
       snapScale: num("snapscale", 0),
+      snapTo: (attrs.get("snapto") ?? "true") === "true",
+      edgesLegal: (attrs.get("edgeslegal") ?? "false") === "true",
+      cornersLegal: (attrs.get("cornerslegal") ?? "false") === "true",
     },
     widthHexes: 33,
     heightHexes: 10,

@@ -197,10 +197,10 @@ export class MapWindow {
     return this.hexGrid.locationName(piece.x - this.boardOrigin.x, piece.y - this.boardOrigin.y);
   }
 
-  /** Snap a world point to the grid (Map.snapTo); identity without a grid. */
+  /** Snap a world point to the grid (Map.snapTo → HexGrid.snapTo); identity without a grid. */
   snap(x: number, y: number): { x: number; y: number } {
     if (!this.hexGrid) return { x, y };
-    const s = this.hexGrid.snapToHex(x - this.boardOrigin.x, y - this.boardOrigin.y);
+    const s = this.hexGrid.snapTo(x - this.boardOrigin.x, y - this.boardOrigin.y);
     return { x: s.x + this.boardOrigin.x, y: s.y + this.boardOrigin.y };
   }
 
