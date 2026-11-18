@@ -2,8 +2,9 @@
  * Port of VASSAL `HexGrid` + the `ASLHexGrid` subclass (non-sideways, non-oblique).
  *
  * Upstream references:
- * - vassal-master/.../boardPicker/board/HexGrid.java (snapToHex/hexPoint,
- *   getSingleHexShape, getRawColumn/getRawRow, range via cube coords)
+ * - vassal-master/.../boardPicker/board/HexGrid.java (snapTo/edgesLegal/
+ *   cornersLegal, snapToHexSide/snapToHexVertex, hexPoint, getSingleHexShape,
+ *   getRawColumn/getRawRow, range via cube coords)
  * - $VASL_SRC/build/module/map/boardPicker/board/ASLHexGrid.java
  *   (locationName, getLocation, hexPosition, hexrow)
  * - $VASL_SRC/build/module/map/boardArchive/BoardArchive.java
@@ -26,6 +27,12 @@ export interface HexGridDef {
   alternate: boolean;
   /** HexGrid snapScale: >0 allows sub-hex snap points (deluxe boards). */
   snapScale: number;
+  /** HexGrid snapTo: false disables snapping unless forced (default true). */
+  snapTo?: boolean;
+  /** HexGrid edgesLegal: hex sides are legal snap points (default false). */
+  edgesLegal?: boolean;
+  /** HexGrid cornersLegal: hex corners are legal snap points (default false). */
+  cornersLegal?: boolean;
   /** Draw the grid lines over the board (HexGrid visible). */
   visible?: boolean;
   /** Grid line color, CSS-ready (HexGrid color, default black). */
@@ -72,6 +79,9 @@ export function geoGridDef(): HexGridDef {
     originY: GEO_A1_CENTER.y,
     alternate: false,
     snapScale: 0,
+    snapTo: true,
+    edgesLegal: false,
+    cornersLegal: false,
   };
 }
 
@@ -186,8 +196,9 @@ export class HexGridModel {
 
   /** HexGrid.range: hex distance via odd-q offset → cube coordinates. */
   range(x1: number, y1: number, x2: number, y2: number): number {
-    const a = this.snapToHex(x1, y1);
-    const b = this.snapToHex(x2, y2);
+    // Java snaps both points through Map.snapTo (full snapTo, not just centers).
+    const a = this.snapTo(x1, y1);
+    const b = this.snapTo(x2, y2);
     const c1 = qoffsetToCube(this.rawColumn(a.x), this.rawRow(a.x, a.y));
     const c2 = qoffsetToCube(this.rawColumn(b.x), this.rawRow(b.x, b.y));
     return cubeDistance(c1, c2);
@@ -234,6 +245,97 @@ export class HexGridModel {
       yLoc += snapDelta(y - yLoc, dy, snapScale);
     }
     return { x: xLoc, y: yLoc };
+  }
+
+  /**
+   * HexGrid.snapTo(p, force, centerOnly): full snap honoring the grid's
+   * snapTo/edgesLegal/cornersLegal flags. Non-sideways port, so the Java
+   * rotateIfSideways calls are no-ops here.
+   */
+  snapTo(x: number, y: number, force = false, centerOnly = false): { x: number; y: number } {
+    if (this.def.snapTo === false && !force) return { x, y };
+    const center = this.snapToHex(x, y);
+    if (centerOnly) return center;
+    const edges = this.def.edgesLegal === true;
+    const corners = this.def.cornersLegal === true;
+    if (edges && corners) {
+      const edge = this.snapToHexSide(x, y);
+      const vertex = this.snapToHexVertex(x, y);
+      const dEdge = (x - edge.x) ** 2 + (y - edge.y) ** 2;
+      const dVertex = (x - vertex.x) ** 2 + (y - vertex.y) ** 2;
+      return this.checkCenter(center, dEdge < dVertex ? edge : vertex);
+    }
+    if (edges) return this.checkCenter(center, this.snapToHexSide(x, y));
+    if (corners) return this.checkCenter(center, this.snapToHexVertex(x, y));
+    return center;
+  }
+
+  /** HexGrid.snapToHexSide: nearest hex side (or center when snapScale>0 and closer). */
+  snapToHexSide(x: number, y: number): { x: number; y: number } {
+    let sx = this.sideX(x, y);
+    let sy = this.sideY(x, y);
+    const { snapScale } = this.def;
+    if (snapScale > 0) {
+      const c = this.snapToHex(x, y);
+      if (Math.abs(x - c.x) + Math.abs(y - c.y) <= Math.abs(x - sx) + Math.abs(y - sy)) {
+        sx = c.x;
+        sy = c.y;
+      }
+    }
+    return { x: sx, y: sy };
+  }
+
+  /** HexGrid.snapToHexVertex: nearest hex corner (or center when snapScale>0 and closer). */
+  snapToHexVertex(x: number, y: number): { x: number; y: number } {
+    let vx = this.vertexX(x, y);
+    let vy = this.vertexY(x, y);
+    const { snapScale } = this.def;
+    if (snapScale > 0) {
+      const c = this.snapToHex(x, y);
+      if (Math.abs(x - c.x) + Math.abs(y - c.y) <= Math.abs(x - vx) + Math.abs(y - vy)) {
+        vx = c.x;
+        vy = c.y;
+      }
+    }
+    return { x: vx, y: vy };
+  }
+
+  /** HexGrid.checkCenter: keep the center when it is within ~1px of the target. */
+  private checkCenter(center: { x: number; y: number }, target: { x: number; y: number }): { x: number; y: number } {
+    const d = (center.x - target.x) ** 2 + (center.y - target.y) ** 2;
+    return d <= 2 ? center : target;
+  }
+
+  /** HexGrid.sideX/sideY: coordinates of the nearest hex-side point. */
+  private sideX(x: number, _y: number): number {
+    const { dx, originX } = this.def;
+    return Math.trunc((dx / 2) * Math.floor(((x - originX + dx / 4) * 2) / dx) + originX);
+  }
+
+  private sideY(x: number, y: number): number {
+    const { dx, dy, originX, originY } = this.def;
+    const nx = Math.floor(((x - originX + dx / 4) * 2) / dx);
+    if (nx % 2 === 0) {
+      return Math.trunc((dy / 2) * Math.floor(((y - originY + dy / 4) * 2) / dy) + originY);
+    }
+    return Math.trunc((dy / 2) * Math.floor(((y - originY) * 2) / dy) + Math.trunc(dy / 4) + originY);
+  }
+
+  /** HexGrid.vertexX/vertexY: coordinates of the nearest hex corner. */
+  private vertexX(x: number, y: number): number {
+    const { dx, dy, originX, originY } = this.def;
+    const ny = Math.floor(((y - originY + dy / 4) * 2) / dy);
+    if (ny % 2 === 0) {
+      return Math.trunc((2 * dx) / 3 * Math.trunc(Math.floor(x - originX + dx / 3) * 3 / (2 * dx)) + originX);
+    }
+    return Math.trunc(
+      (2 * dx) / 3 * Math.trunc(Math.floor(x - originX + (2 * dx) / 3) * 3 / (2 * dx)) - Math.trunc(dx / 3) + originX,
+    );
+  }
+
+  private vertexY(_x: number, y: number): number {
+    const { dy, originY } = this.def;
+    return Math.trunc((dy / 2) * Math.floor(((y - originY + dy / 4) * 2) / dy) + originY);
   }
 
   /** Vertices of the hex centered at (cx,cy) — HexGrid.getSingleHexShape. */

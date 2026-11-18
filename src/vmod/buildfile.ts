@@ -871,7 +871,12 @@ function parseHexGrid(el: Element): HexGridDef {
     originX: parseInt(el.getAttribute("x0") ?? "0", 10) || 0,
     originY: parseInt(el.getAttribute("y0") ?? "32", 10) || 0,
     alternate: false,
-    snapScale: parseInt(el.getAttribute("snapScale") ?? "0", 10) || 0,
+    // Java HexGrid keys: SNAP_SCALE = "snapscale", SNAP_TO = "snapTo",
+    // EDGES = "edgesLegal", CORNERS = "cornersLegal" (defaults: 0/true/false/false).
+    snapScale: parseInt(el.getAttribute("snapScale") ?? el.getAttribute("snapscale") ?? "0", 10) || 0,
+    snapTo: el.getAttribute("snapTo") !== "false",
+    edgesLegal: el.getAttribute("edgesLegal") === "true",
+    cornersLegal: el.getAttribute("cornersLegal") === "true",
     visible: el.getAttribute("visible") === "true",
     color: cssColor(el.getAttribute("color")) ?? "#000000",
   };
