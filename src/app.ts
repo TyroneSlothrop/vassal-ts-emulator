@@ -19,6 +19,8 @@ import { pieceHalfExtent, pieceShapeHalfExtent } from "./board/render";
 import { Palette } from "./ui/Palette";
 import { PiecePreview } from "./ui/PiecePreview";
 import { Toolbar } from "./ui/Toolbar";
+import { BoardPickerDialog } from "./ui/BoardPickerDialog";
+import { findOrCreatePickerBoard } from "./vmod/boardpicker";
 import { ContextMenu } from "./ui/ContextMenu";
 import { Chatter, type CardPreview } from "./ui/Chatter";
 import { WindowManager } from "./ui/wm/WindowManager";
@@ -254,6 +256,7 @@ class App {
     this.toolbar = new Toolbar(this.model.maps, {
       onSelectMap: (m) => this.switchMap(m),
       onSelectBoard: (img) => this.setCurrentBoard(img || null),
+      onOpenBoardPicker: () => this.openBoardPicker(),
       onSelectScenario: (file) => this.applyScenario(file),
       onSetInteractionLayer: (layer) => this.map.setInteractionLayer(layer),
       onSetPointerTool: (tool) => this.map.setPointerTool(tool),
@@ -394,6 +397,11 @@ class App {
     }
     if (!defaultBoard && boards.length === 1 && !boards[0].reversible) defaultBoard = boards[0];
     if (defaultBoard) this.toolbar.selectBoardByName(defaultBoard.name);
+    // Java BoardPicker.setup(true): with no default setup and several
+    // possible boards, prompt for the board grid at game start.
+    else if (this.currentMap.boardPicker && boards.length > 1) {
+      queueMicrotask(() => this.openBoardPicker());
+    }
 
     // Debug hook for automated verification (harmless in production).
     (window as unknown as { __vb: unknown }).__vb = {
@@ -777,6 +785,37 @@ class App {
     this.toolbar.setBoardImage(imageName);
     this.map.setBoard(imageName);
     this.applyBoardGrid(imageName);
+  }
+
+  /**
+   * Open the stock BoardPicker grid dialog for the current map: pick several
+   * boards into cells (add row/column), flip reversible ones, OK composes
+   * them into one multi-board layout (same rendering as a saved layout).
+   */
+  private openBoardPicker(): void {
+    const map = this.currentMap;
+    const def = map.boardPicker;
+    if (!def) return;
+    const state = this.stateFor(map);
+    const cur = state.boardImage ? map.boards.find((b) => boardKey(b) === state.boardImage) : null;
+    const initial = cur?.tiles
+      ? cur.tiles.map((t) => ({ boardName: t.boardName, x: t.x, y: t.y, reversed: !!t.reversed }))
+      : null;
+    BoardPickerDialog.open(def, map, initial, {
+      onApply: (tiles) => {
+        if (!tiles.length) {
+          this.setCurrentBoard(null);
+          this.chatter.add("Boards cleared.");
+          return;
+        }
+        const board = findOrCreatePickerBoard(map, tiles);
+        if (!board) return;
+        this.toolbar.setBoards(map);
+        this.setCurrentBoard(boardKey(board));
+        this.chatter.add(`Boards: ${tiles.map((t) => t.boardName).join(", ")}`);
+      },
+      onCancel: () => {},
+    }, (entry) => this.imageSource().imageUrl(entry));
   }
 
   /** Attach the active board's hex grid, if any, to the map window. */
