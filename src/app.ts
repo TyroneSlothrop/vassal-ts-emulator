@@ -750,6 +750,7 @@ class App {
     this.map.setBoardDefs(m.boards);
     this.map.setLayerOrder(m.layerOrder);
     this.map.setLosThread(m.losThread ?? null);
+    this.map.setDetailViewer(m.detailViewer ?? null);
     this.map.setStackMetrics(m.stackMetrics ?? null);
     this.map.setBoardOrigin(m.edgeWidth ?? 0, m.edgeHeight ?? 0);
     this.map.setPieces(state.pieces);

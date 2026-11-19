@@ -1,5 +1,7 @@
-import type { GamePiece } from "../model/piece";
-import { boardKey, cssColor, type BoardDef, type LosThreadDef, type SlotCategory, type StackMetricsDef } from "../vmod/buildfile";
+import { stackAtPosition, type GamePiece } from "../model/piece";
+import { matchesEvent, parseKeyStroke } from "../model/keystroke";
+import { renderPieceToCanvas } from "./piece-preview";
+import { boardKey, cssColor, type BoardDef, type DetailViewerDef, type LosThreadDef, type SlotCategory, type StackMetricsDef } from "../vmod/buildfile";
 import type { HexGridModel } from "../vmod/hexgrid";
 import type { ImageStore } from "./images";
 import { drawPiece, drawSelection, hitTestPiece, pieceHalfExtent, segmentIntersectsPiece } from "./render";
@@ -81,6 +83,8 @@ export class MapWindow {
   private layerOrder: string[] = [];
   private layerRank = new Map<string, number>();
   private selected = new Set<GamePiece>();
+  /** Stack positions (x:y) the player expanded via double-click (Java Stack.expanded). */
+  private expandedStacks = new Set<string>();
   private primarySelected: GamePiece | null = null;
   private interactionLayer: InteractionLayer = "models";
   private pointerTool: PointerTool = "select";
@@ -90,6 +94,12 @@ export class MapWindow {
   private losScale = 0;
   private losThread: LosThreadDef | null = null;
   private stackMetrics: StackMetricsDef | null = null;
+  /** Map-level CounterDetailViewer config (hover stack inspector). */
+  private detailViewer: DetailViewerDef | null = null;
+  private hoverTimer: ReturnType<typeof setTimeout> | null = null;
+  private hideTimer: ReturnType<typeof setTimeout> | null = null;
+  private hoverWorld: { x: number; y: number } | null = null;
+  private detailPopup: HTMLElement | null = null;
   /** Map edge buffer: boards + board-relative grids anchor here. */
   private boardOrigin = { x: 0, y: 0 };
   private hexGrid: HexGridModel | null = null;
@@ -144,6 +154,12 @@ export class MapWindow {
   /** Adopt the map's StackMetrics (visual cascade for co-located pieces). */
   setStackMetrics(def: StackMetricsDef | null): void {
     this.stackMetrics = def;
+  }
+
+  /** Adopt the map's CounterDetailViewer declaration, if any. */
+  setDetailViewer(def: DetailViewerDef | null): void {
+    this.detailViewer = def;
+    this.hideDetailPopup();
     this.requestDraw();
   }
 
@@ -162,21 +178,29 @@ export class MapWindow {
 
   /**
    * Visual cascade offsets: pieces sharing an exact position draw shifted
-   * up-right per index (StackMetrics unexpanded separation), so stacks read
-   * as stacks. Logical positions/hit-testing are untouched (cycleHit
-   * disambiguates overlaps).
+   * up-right per index. Stacks the player expanded (double-click, Java
+   * Stack.setExpanded) fan out with the StackMetrics expanded separation
+   * (exSepX/exSepY) so each piece is individually clickable; the rest use the
+   * unexpanded separation. Logical positions stay put — hit-testing applies
+   * these offsets (piecesAt).
    */
   private stackOffsets(pieces: GamePiece[]): Map<GamePiece, { ox: number; oy: number }> {
     const out = new Map<GamePiece, { ox: number; oy: number }>();
     if (this.stackMetrics?.disabled) return out;
-    const sepX = this.stackMetrics?.unexSepX ?? 2;
-    const sepY = this.stackMetrics?.unexSepY ?? 4;
-    const counts = new Map<string, number>();
+    const groups = new Map<string, GamePiece[]>();
     for (const p of pieces) {
       const key = `${Math.round(p.x)}:${Math.round(p.y)}`;
-      const i = counts.get(key) ?? 0;
-      counts.set(key, i + 1);
-      if (i > 0) out.set(p, { ox: i * sepX, oy: -i * sepY });
+      const g = groups.get(key);
+      if (g) g.push(p);
+      else groups.set(key, [p]);
+    }
+    for (const [key, group] of groups) {
+      const expanded = this.expandedStacks.has(key) && group.length > 1;
+      const sepX = expanded ? (this.stackMetrics?.exSepX ?? 6) : (this.stackMetrics?.unexSepX ?? 2);
+      const sepY = expanded ? (this.stackMetrics?.exSepY ?? 18) : (this.stackMetrics?.unexSepY ?? 4);
+      for (let i = 1; i < group.length; i++) {
+        out.set(group[i], { ox: i * sepX, oy: -i * sepY });
+      }
     }
     return out;
   }
@@ -298,6 +322,7 @@ export class MapWindow {
 
   setBoard(imageName: string | null): void {
     this.boardImage = imageName;
+    this.expandedStacks.clear();
     if (imageName) this.fitBoard();
     this.requestDraw();
   }
@@ -991,11 +1016,23 @@ export class MapWindow {
     c.addEventListener("pointerdown", (e) => this.onPointerDown(e));
     c.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
     c.addEventListener("contextmenu", (e) => this.onContextMenu(e));
+    c.addEventListener("dblclick", (e) => this.onDoubleClick(e));
     window.addEventListener("pointermove", (e) => this.onPointerMove(e));
+    window.addEventListener("pointermove", (e) => this.onHoverMove(e));
     window.addEventListener("pointerup", (e) => this.onPointerUp(e));
     window.addEventListener("pointercancel", (e) => this.onPointerUp(e));
+    c.addEventListener("pointerleave", () => this.onHoverLeave());
+    window.addEventListener("pointerdown", (e) => {
+      if (this.detailPopup && !this.detailPopup.contains(e.target as Node)) this.hideDetailPopup();
+    }, true);
     window.addEventListener("keydown", (e) => {
       if (e.code === "Space" && !isTypingTarget(e.target)) this.spacePan = true;
+      // CounterDetailViewer hotkey (e.g. "32,130") toggles the stack popup.
+      const hk = this.detailViewer?.hotkey ? parseKeyStroke(this.detailViewer.hotkey) : null;
+      if (hk && this.mode === "idle" && matchesEvent(hk, e)) {
+        e.preventDefault();
+        this.toggleDetailAtHover();
+      }
     });
     window.addEventListener("keyup", (e) => {
       if (e.code === "Space") this.spacePan = false;
@@ -1014,10 +1051,12 @@ export class MapWindow {
   private piecesAt(wx: number, wy: number): GamePiece[] {
     if (this.interactionLayer === "map") return [];
     const ordered = this.zSorted();
+    const offsets = this.stackOffsets(ordered);
     const hits: GamePiece[] = [];
     const fallback: GamePiece[] = [];
     for (let i = ordered.length - 1; i >= 0; i--) {
-      if (!hitTestPiece(ordered[i], wx, wy, this.images, this.pieceScale)) continue;
+      const off = offsets.get(ordered[i]) ?? { ox: 0, oy: 0 };
+      if (!hitTestPiece(ordered[i], wx - off.ox, wy - off.oy, this.images, this.pieceScale)) continue;
       (this.matchesInteractionLayer(ordered[i]) ? hits : fallback).push(ordered[i]);
     }
     // The edit focus is a priority, not a wall: with nothing from the focused
@@ -1034,8 +1073,30 @@ export class MapWindow {
     return hits[(idx + 1 + hits.length) % hits.length] ?? hits[0];
   }
 
+  /**
+   * Java Stack.setExpanded: double-click fans a stack out (expanded separation,
+   * exSepX/exSepY) so each piece is individually clickable/draggable;
+   * double-click again collapses it. (pointerdown's detail is unreliable, so
+   * this uses the dblclick event.)
+   */
+  private onDoubleClick(e: MouseEvent): void {
+    const p = this.localXY(e);
+    const world = this.screenToWorld(p.x, p.y);
+    const hits = this.piecesAt(world.x, world.y);
+    if (hits.length <= 1) return;
+    const key = `${Math.round(hits[0].x)}:${Math.round(hits[0].y)}`;
+    if (this.expandedStacks.has(key)) this.expandedStacks.delete(key);
+    else this.expandedStacks.add(key);
+    if (!this.selected.has(hits[0])) this.select(hits[0]);
+    this.mode = "idle";
+    this.dragPieces = [];
+    this.clearLongPress();
+    this.requestDraw();
+  }
+
   private onPointerDown(e: PointerEvent): void {
     if (e.button === 2) return;
+    this.hideDetailPopup();
     try {
       this.canvas.setPointerCapture(e.pointerId);
     } catch {
@@ -1117,6 +1178,125 @@ export class MapWindow {
       this.clearLongPress();
       this.requestDraw();
     }
+  }
+
+  // ---- CounterDetailViewer (hover stack inspector) -------------------------
+
+  private onHoverMove(e: PointerEvent): void {
+    if (!this.detailViewer || e.buttons !== 0 || this.mode !== "idle") return;
+    const p = this.localXY(e);
+    const r = this.canvas.getBoundingClientRect();
+    if (p.x < 0 || p.y < 0 || p.x > r.width || p.y > r.height) {
+      this.onHoverLeave();
+      return;
+    }
+    const world = this.screenToWorld(p.x, p.y);
+    const hit = this.topPieceAt(world.x, world.y);
+    if (!hit) {
+      this.onHoverLeave();
+      return;
+    }
+    // Re-arm the delay only when the hovered stack changes.
+    if (!this.hoverWorld || this.hoverWorld.x !== hit.x || this.hoverWorld.y !== hit.y) {
+      this.hoverWorld = { x: hit.x, y: hit.y };
+      this.clearHoverTimer();
+      const stack = stackAtPosition(this.pieces, hit.x, hit.y);
+      if (stack.length >= Math.max(1, this.detailViewer.minDisplayPieces)) {
+        this.hoverTimer = setTimeout(() => this.showDetailPopup(stack, e.clientX, e.clientY), this.detailViewer.delay);
+      }
+    }
+  }
+
+  private onHoverLeave(): void {
+    this.clearHoverTimer();
+    this.hoverWorld = null;
+    // Grace period: moving onto the popup itself must not dismiss it.
+    if (this.detailPopup && !this.hideTimer) {
+      this.hideTimer = setTimeout(() => this.hideDetailPopup(), 300);
+    }
+  }
+
+  private clearHoverTimer(): void {
+    if (this.hoverTimer != null) {
+      clearTimeout(this.hoverTimer);
+      this.hoverTimer = null;
+    }
+  }
+
+  private toggleDetailAtHover(): void {
+    if (this.detailPopup) {
+      this.hideDetailPopup();
+      return;
+    }
+    if (!this.detailViewer || !this.hoverWorld) return;
+    const hit = this.topPieceAt(this.hoverWorld.x, this.hoverWorld.y);
+    if (!hit) return;
+    const stack = stackAtPosition(this.pieces, hit.x, hit.y);
+    const r = this.canvas.getBoundingClientRect();
+    this.showDetailPopup(stack, r.left + r.width / 2, r.top + 80);
+  }
+
+  /** Draw every piece of the hovered stack in a floating popup near (cx, cy). */
+  private showDetailPopup(stack: GamePiece[], cx: number, cy: number): void {
+    const def = this.detailViewer;
+    if (!def || !stack.length) return;
+    this.hideDetailPopup();
+    this.clearHideTimer();
+    const pop = document.createElement("div");
+    pop.className = "detail-popup";
+    pop.style.pointerEvents = "auto";
+    pop.style.background = def.bgColor;
+    pop.addEventListener("pointerenter", () => this.clearHideTimer());
+    pop.style.color = def.fgColor;
+    pop.style.borderColor = def.fgColor;
+    const cellSize = Math.max(36, Math.min(120, Math.round(64 * def.zoomLevel)));
+    for (const piece of stack) {
+      const cell = document.createElement("div");
+      cell.className = "detail-cell";
+      cell.style.cursor = "pointer";
+      cell.title = piece.name();
+      // Click a popup cell to select that piece directly (pick from under a stack).
+      cell.addEventListener("click", () => {
+        this.hideDetailPopup();
+        this.select(piece);
+      });
+      if (def.showGraph) {
+        const cv = document.createElement("canvas");
+        renderPieceToCanvas(cv, piece, this.images, { size: cellSize });
+        cell.appendChild(cv);
+      }
+      if (def.showText) {
+        const label = document.createElement("div");
+        label.className = "detail-name";
+        label.textContent = piece.name();
+        label.style.fontSize = `${def.fontSize}px`;
+        label.style.color = def.fgColor;
+        cell.appendChild(label);
+      }
+      pop.appendChild(cell);
+    }
+    document.body.appendChild(pop);
+    // Clamp into the viewport, offset from the cursor.
+    const pad = 18;
+    const w = pop.offsetWidth;
+    const h = pop.offsetHeight;
+    pop.style.left = `${Math.max(4, Math.min(window.innerWidth - w - 4, cx + pad))}px`;
+    pop.style.top = `${Math.max(4, Math.min(window.innerHeight - h - 4, cy + pad))}px`;
+    this.detailPopup = pop;
+  }
+
+  private clearHideTimer(): void {
+    if (this.hideTimer != null) {
+      clearTimeout(this.hideTimer);
+      this.hideTimer = null;
+    }
+  }
+
+  private hideDetailPopup(): void {
+    this.clearHoverTimer();
+    this.clearHideTimer();
+    this.detailPopup?.remove();
+    this.detailPopup = null;
   }
 
   private onPointerMove(e: PointerEvent): void {

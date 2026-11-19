@@ -246,3 +246,34 @@ describe("imageless boards with buildFile grids (old modules)", () => {
     expect(n).toMatchObject({ first: "H", hType: "N", vType: "N", hOff: 1, vOff: 1, stagger: true, visible: true, fontSize: 9, color: "rgb(102,204,255)" });
   });
 });
+
+describe("CounterDetailViewer declaration", () => {
+  it("parses hover-inspector attrs from the Map's CounterDetailViewer", () => {
+    const xml = `<?xml version="1.0"?>
+<VASSAL.build.GameModule name="M" version="1">
+  <VASSAL.build.module.Map mapName="Main Map" buttonName="Map" launch="false">
+    <VASSAL.build.module.map.CounterDetailViewer bgColor="255,255,255" fgColor="0,0,0" delay="1500" showgraph="true" showtext="true" zoomlevel="1.0" minDisplayPieces="0" hotkey="32,130" fontSize="9" borderWidth="4"/>
+  </VASSAL.build.module.Map>
+</VASSAL.build.GameModule>`;
+    const model = parseBuildFile(xml);
+    const dv = model.maps[0].detailViewer!;
+    expect(dv).toBeDefined();
+    expect(dv.delay).toBe(500); // declared 1500, capped at 500
+    expect(dv.showGraph).toBe(true);
+    expect(dv.showText).toBe(true);
+    expect(dv.zoomLevel).toBe(1);
+    expect(dv.minDisplayPieces).toBe(0);
+    expect(dv.hotkey).toBe("32,130");
+    expect(dv.bgColor).toBe("rgb(255,255,255)");
+    expect(dv.fgColor).toBe("rgb(0,0,0)");
+    expect(dv.borderWidth).toBe(4);
+  });
+
+  it("leaves detailViewer undefined when the map has none", () => {
+    const xml = `<?xml version="1.0"?>
+<VASSAL.build.GameModule name="M" version="1">
+  <VASSAL.build.module.Map mapName="Main Map" buttonName="Map" launch="false"/>
+</VASSAL.build.GameModule>`;
+    expect(parseBuildFile(xml).maps[0].detailViewer).toBeUndefined();
+  });
+});

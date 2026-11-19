@@ -110,12 +110,35 @@ export interface MapDef {
   losScale: number;
   /** Full LOS_Thread declaration when the map has one. */
   losThread?: LosThreadDef;
+  /** Map-level CounterDetailViewer (hover stack inspector), if declared. */
+  detailViewer?: DetailViewerDef;
   /** At-start stacks placed on new-game setup. */
   setupStacks?: SetupStackDef[];
   /** Map-level Zoomer levels, if declared. */
   zoomer?: ZoomerDef;
   /** Map-level GlobalMap (overview) definition, if declared. */
   globalMap?: GlobalMapDef;
+}
+
+/** Stock `CounterDetailViewer` attributes (Java defaults). */
+export interface DetailViewerDef {
+  /** Hover delay in ms before the popup appears (Java delay, default 700). */
+  delay: number;
+  /** Draw every piece of the stack in the popup (showgraph). */
+  showGraph: boolean;
+  /** Also show each piece's name text (showtext). */
+  showText: boolean;
+  /** Scale of the drawn pieces (zoomlevel). */
+  zoomLevel: number;
+  /** Minimum stack size to trigger the popup (minDisplayPieces). */
+  minDisplayPieces: number;
+  /** Toggle hotkey spec ("keyCode,modifiers"), e.g. "32,130". */
+  hotkey: string | null;
+  bgColor: string;
+  fgColor: string;
+  fontSize: number;
+  /** Extra horizontal padding between pieces (borderWidth). */
+  borderWidth: number;
 }
 
 export interface DrawPileDef {
@@ -250,6 +273,7 @@ const T = {
   privateMap: NS + "module.PrivateMap",
   playerHand: NS + "module.PlayerHand",
   boardPicker: NS + "module.map.BoardPicker",
+  counterDetailViewer: NS + "module.map.CounterDetailViewer",
   board: NS + "module.map.boardPicker.Board",
   layered: NS + "module.map.LayeredPieceCollection",
   drawPile: NS + "module.map.DrawPile",
@@ -785,6 +809,30 @@ function parseMap(mapEl: Element): MapDef {
     };
   }
 
+  // CounterDetailViewer: hover stack inspector (Java defaults).
+  let detailViewer: DetailViewerDef | undefined;
+  const cdv = firstChild(mapEl, T.counterDetailViewer);
+  if (cdv) {
+    const dnum = (attr: string, dflt: number): number => {
+      const n = Number.parseFloat(cdv.getAttribute(attr) ?? "");
+      return Number.isFinite(n) ? n : dflt;
+    };
+    detailViewer = {
+      // Cap the hover delay at 500 ms: module values (e.g. 1500) feel sluggish
+      // on touch/pointer input.
+      delay: Math.min(dnum("delay", 700), 500),
+      showGraph: cdv.getAttribute("showgraph") !== "false",
+      showText: cdv.getAttribute("showtext") === "true",
+      zoomLevel: dnum("zoomlevel", 1),
+      minDisplayPieces: dnum("minDisplayPieces", 2),
+      hotkey: cdv.getAttribute("hotkey") || null,
+      bgColor: cssColor(cdv.getAttribute("bgColor")) ?? "#ffffff",
+      fgColor: cssColor(cdv.getAttribute("fgColor")) ?? "#000000",
+      fontSize: dnum("fontSize", 9),
+      borderWidth: dnum("borderWidth", 0),
+    };
+  }
+
   // Stack cascade metrics (Java defaults when absent/short).
   let stackMetrics: StackMetricsDef | undefined;
   const smEl = mapEl.getElementsByTagName(T.stackMetrics)[0];
@@ -823,6 +871,7 @@ function parseMap(mapEl: Element): MapDef {
     edgeWidth,
     edgeHeight,
     ...(losThread ? { losThread } : {}),
+    ...(detailViewer ? { detailViewer } : {}),
     ...(stackMetrics ? { stackMetrics } : {}),
   };
 }
