@@ -12,7 +12,7 @@ import { drawFromDeck, instantiateDecks, shuffleDeck, type DeckState } from "./m
 import { setGlobalProperties } from "./model/globals";
 import { htmlLabelImage } from "./board/html-label";
 import { HexGridModel } from "./vmod/hexgrid";
-import { readVassalSave, writeVassalSave, type MapImportState } from "./vmod/vsav";
+import { readVassalSave, writeVassalSave, parseBoardPickerCommand, type MapImportState } from "./vmod/vsav";
 import { ImageStore, type ImageSource } from "./board/images";
 import { MapWindow, type PointerTool } from "./board/MapWindow";
 import { pieceHalfExtent, pieceShapeHalfExtent } from "./board/render";
@@ -396,7 +396,19 @@ class App {
       if (defaultBoard) break;
     }
     if (!defaultBoard && boards.length === 1 && !boards[0].reversible) defaultBoard = boards[0];
-    if (defaultBoard) this.toolbar.selectBoardByName(defaultBoard.name);
+    // Java BoardPicker.getDefaultSetup(): a <setup> command inside the picker
+    // pre-places the boards at fixed cells, so the game-start prompt is
+    // skipped (isFinished() === true) — apply it instead of opening the dialog.
+    if (!defaultBoard && this.currentMap.boardPicker?.defaultSetup) {
+      const parsed = parseBoardPickerCommand(this.currentMap.boardPicker.defaultSetup);
+      const fixed = parsed ? findOrCreatePickerBoard(this.currentMap, parsed.tiles) : null;
+      if (fixed) defaultBoard = fixed;
+    }
+    if (defaultBoard) {
+      // The composed default board may not be in the dropdown yet.
+      this.toolbar.setBoards(this.currentMap);
+      this.toolbar.selectBoardByName(defaultBoard.name);
+    }
     // Java BoardPicker.setup(true): with no default setup and several
     // possible boards, prompt for the board grid at game start.
     else if (this.currentMap.boardPicker && boards.length > 1) {

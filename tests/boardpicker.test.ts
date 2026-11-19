@@ -133,3 +133,17 @@ describe("encodePickerCommand round-trips through parseBoardPickerCommand", () =
     expect(parsed!.tiles).toEqual(tiles);
   });
 });
+
+describe("BoardPicker <setup> default command (pre-placed boards)", () => {
+  it("a setup command composes the fixed layout without prompting", () => {
+    const m = map([board("map A"), board("map B")]);
+    const parsed = parseBoardPickerCommand("Main MapBoardPicker\tmap A\t0\t0\tmap B\t1\t0");
+    expect(parsed).not.toBeNull();
+    expect(parsed!.mapName).toBe("Main Map");
+    const composed = findOrCreatePickerBoard(m, parsed!.tiles);
+    expect(composed!.tiles).toEqual([
+      { boardName: "map A", image: "map A.png", x: 0, y: 0 },
+      { boardName: "map B", image: "map B.png", x: 1, y: 0 },
+    ]);
+  });
+});

@@ -135,6 +135,12 @@ export interface BoardPickerDef {
   maxColumns: number;
   /** Map.allowMultiple — shows the add row/column/clear buttons. */
   allowMultiple: boolean;
+  /**
+   * Java BoardPicker defaultSetup: raw text of the picker's `<setup>` child,
+   * an encoded SetBoards command that pre-places boards at fixed cells. When
+   * present, desktop VASSAL never prompts (isFinished() === true).
+   */
+  defaultSetup?: string;
 }
 
 export interface DrawPileDef {
@@ -795,6 +801,10 @@ function parseMap(mapEl: Element): MapDef {
       // Java: Map.allowMultiple is pushed into its BoardPicker (Map.java:520).
       allowMultiple: mapEl.getAttribute("allowMultiple") === "true",
     };
+    // Java BoardPicker.buildChild: the <setup> child holds the default
+    // SetBoards command (kept verbatim, tabs included).
+    const setupEl = Array.from(picker.children).find((c) => c.tagName === "setup");
+    if (setupEl?.textContent) boardPicker.defaultSetup = setupEl.textContent;
   }
   let layerOrder: string[] = [];
   const layered = mapEl.getElementsByTagName(T.layered)[0];

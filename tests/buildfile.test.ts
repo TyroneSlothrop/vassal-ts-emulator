@@ -246,3 +246,34 @@ describe("imageless boards with buildFile grids (old modules)", () => {
     expect(n).toMatchObject({ first: "H", hType: "N", vType: "N", hOff: 1, vOff: 1, stagger: true, visible: true, fontSize: 9, color: "rgb(102,204,255)" });
   });
 });
+
+describe("BoardPicker declaration", () => {
+  const XML = `<?xml version="1.0"?>
+<VASSAL.build.GameModule name="M" version="1">
+  <VASSAL.build.module.Map mapName="Main Map" buttonName="Map" allowMultiple="true" launch="false">
+    <VASSAL.build.module.map.BoardPicker title="Choose Boards" boardPrompt="Select board" slotWidth="350" slotHeight="125" slotScale="0.2">
+      <setup>Main MapBoardPicker\tmap A\t0\t0\tmap B\t1\t0</setup>
+      <VASSAL.build.module.map.boardPicker.Board image="a.png" name="map A" reversible="false"/>
+      <VASSAL.build.module.map.boardPicker.Board image="b.png" name="map B" reversible="false"/>
+    </VASSAL.build.module.map.BoardPicker>
+  </VASSAL.build.module.Map>
+</VASSAL.build.GameModule>`;
+
+  it("parses picker attrs, Map.allowMultiple and the <setup> default command", () => {
+    const model = parseBuildFile(XML);
+    const picker = model.maps[0].boardPicker!;
+    expect(model.maps[0].allowMultiple).toBe(true);
+    expect(picker.title).toBe("Choose Boards");
+    expect(picker.allowMultiple).toBe(true);
+    expect(picker.slotWidth).toBe(350);
+    // Verbatim, tabs included — Java keeps the raw text of <setup>.
+    expect(picker.defaultSetup).toBe("Main MapBoardPicker\tmap A\t0\t0\tmap B\t1\t0");
+    expect(model.maps[0].boards.map((b) => b.name)).toEqual(["map A", "map B"]);
+  });
+
+  it("leaves defaultSetup undefined when the picker has no <setup>", () => {
+    const xml2 = XML.replace(/<setup>[^<]*<\/setup>/, "");
+    const model = parseBuildFile(xml2);
+    expect(model.maps[0].boardPicker!.defaultSetup).toBeUndefined();
+  });
+});
