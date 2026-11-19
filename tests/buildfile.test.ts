@@ -258,7 +258,7 @@ describe("CounterDetailViewer declaration", () => {
     const model = parseBuildFile(xml);
     const dv = model.maps[0].detailViewer!;
     expect(dv).toBeDefined();
-    expect(dv.delay).toBe(1500);
+    expect(dv.delay).toBe(500); // declared 1500, capped at 500
     expect(dv.showGraph).toBe(true);
     expect(dv.showText).toBe(true);
     expect(dv.zoomLevel).toBe(1);

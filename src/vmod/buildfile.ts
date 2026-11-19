@@ -818,7 +818,9 @@ function parseMap(mapEl: Element): MapDef {
       return Number.isFinite(n) ? n : dflt;
     };
     detailViewer = {
-      delay: dnum("delay", 700),
+      // Cap the hover delay at 500 ms: module values (e.g. 1500) feel sluggish
+      // on touch/pointer input.
+      delay: Math.min(dnum("delay", 700), 500),
       showGraph: cdv.getAttribute("showgraph") !== "false",
       showText: cdv.getAttribute("showtext") === "true",
       zoomLevel: dnum("zoomlevel", 1),
