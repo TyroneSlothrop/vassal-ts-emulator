@@ -1,6 +1,7 @@
 import type { GamePiece } from "../model/piece";
 import { boardKey, cssColor, type BoardDef, type LosThreadDef, type SlotCategory, type StackMetricsDef } from "../vmod/buildfile";
 import type { HexGridModel } from "../vmod/hexgrid";
+import { computeTileLayout } from "../vmod/boardpicker";
 import type { ImageStore } from "./images";
 import { drawPiece, drawSelection, hitTestPiece, pieceHalfExtent, segmentIntersectsPiece } from "./render";
 
@@ -947,19 +948,20 @@ export class MapWindow {
     const loaded = boardDef.tiles?.map((tile) => ({ tile, image: this.images.get(tile.image) })).filter((t) => t.image) ?? [];
     if (!loaded.length || loaded.some((t) => !t.image!.loaded)) return null;
 
-    // Cropped tiles occupy their cropped footprint; cells size to the largest.
+    // Cropped tiles occupy their cropped footprint. Pixel origins follow Java
+    // Map.getLocation: cumulative per-row widths / per-column heights, so
+    // differently-sized sections join edge-to-edge without seams.
     const sized = loaded.map(({ tile, image }) => ({
       tile,
       image: image!,
       w: tile.crop && tile.crop.width > 0 ? Math.min(tile.crop.width, image!.width) : image!.width,
       h: tile.crop && tile.crop.height > 0 ? Math.min(tile.crop.height, image!.height) : image!.height,
     }));
-    const cellWidth = Math.max(...sized.map((t) => t.w));
-    const cellHeight = Math.max(...sized.map((t) => t.h));
-    const tiles = sized.map(({ tile, image, w, h }) => ({
+    const positioned = computeTileLayout(sized.map((s) => ({ x: s.tile.x, y: s.tile.y, w: s.w, h: s.h })));
+    const tiles = sized.map(({ tile, image, w, h }, i) => ({
       image,
-      x: tile.x * cellWidth,
-      y: tile.y * cellHeight,
+      x: positioned[i].px,
+      y: positioned[i].py,
       w,
       h,
       reversed: !!tile.reversed,

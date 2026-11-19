@@ -148,3 +148,30 @@ export function tileBoardKey(map: MapDef, boardName: string): string | null {
   const b = map.boards.find((x) => x.name === boardName);
   return b ? boardKey(b) : null;
 }
+
+/**
+ * Java Map.setBoardBoundaries/getLocation(col,row): a board's pixel origin is
+ * the sum of the widths of the boards to its left **in the same row**, plus
+ * the sum of the heights of the boards above it **in the same column**; empty
+ * cells contribute 0. So differently-sized map sections join edge-to-edge
+ * with no gap (a uniform max-cell grid would leave seams).
+ */
+export function computeTileLayout(
+  cells: Array<{ x: number; y: number; w: number; h: number }>,
+): Array<{ x: number; y: number; w: number; h: number; px: number; py: number }> {
+  const wAt = new Map<string, number>();
+  const hAt = new Map<string, number>();
+  for (const c of cells) {
+    wAt.set(`${c.x},${c.y}`, c.w);
+    hAt.set(`${c.x},${c.y}`, c.h);
+  }
+  const widthOf = (x: number, y: number) => wAt.get(`${x},${y}`) ?? 0;
+  const heightOf = (x: number, y: number) => hAt.get(`${x},${y}`) ?? 0;
+  return cells.map((c) => {
+    let px = 0;
+    for (let cx = 0; cx < c.x; cx++) px += widthOf(cx, c.y);
+    let py = 0;
+    for (let cy = 0; cy < c.y; cy++) py += heightOf(c.x, cy);
+    return { ...c, px, py };
+  });
+}

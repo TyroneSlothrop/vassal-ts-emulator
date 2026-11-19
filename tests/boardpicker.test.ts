@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BoardPickerModel, encodePickerCommand, findOrCreatePickerBoard, type PickerTile } from "../src/vmod/boardpicker";
+import { BoardPickerModel, computeTileLayout, encodePickerCommand, findOrCreatePickerBoard, type PickerTile } from "../src/vmod/boardpicker";
 import { parseBoardPickerCommand } from "../src/vmod/vsav";
 import type { BoardDef, MapDef } from "../src/vmod/buildfile";
 
@@ -145,5 +145,39 @@ describe("BoardPicker <setup> default command (pre-placed boards)", () => {
       { boardName: "map A", image: "map A.png", x: 0, y: 0 },
       { boardName: "map B", image: "map B.png", x: 1, y: 0 },
     ]);
+  });
+});
+
+describe("computeTileLayout (Java Map.getLocation cumulative placement)", () => {
+  it("joins differently-sized boards edge-to-edge (no max-cell seam)", () => {
+    const layout = computeTileLayout([
+      { x: 0, y: 0, w: 964, h: 1474 },
+      { x: 1, y: 0, w: 1024, h: 1474 },
+    ]);
+    expect(layout[0]).toMatchObject({ px: 0, py: 0 });
+    // map B starts right after map A's own width, not at max-cell 1024.
+    expect(layout[1]).toMatchObject({ px: 964, py: 0 });
+  });
+
+  it("empty cells contribute 0 (Java boardWidths defaults to 0)", () => {
+    const layout = computeTileLayout([
+      { x: 0, y: 0, w: 100, h: 100 },
+      { x: 2, y: 0, w: 50, h: 100 }, // cell (1,0) empty
+      { x: 0, y: 2, w: 100, h: 40 }, // cells (0,1) empty
+    ]);
+    expect(layout[1]).toMatchObject({ px: 100, py: 0 });
+    expect(layout[2]).toMatchObject({ px: 0, py: 100 });
+  });
+
+  it("cumulates per-row widths and per-column heights independently", () => {
+    const layout = computeTileLayout([
+      { x: 0, y: 0, w: 100, h: 200 },
+      { x: 1, y: 0, w: 300, h: 150 },
+      { x: 0, y: 1, w: 80, h: 120 },
+      { x: 1, y: 1, w: 60, h: 90 },
+    ]);
+    expect(layout[1]).toMatchObject({ px: 100, py: 0 }); // right of (0,0)
+    expect(layout[2]).toMatchObject({ px: 0, py: 200 }); // below (0,0)
+    expect(layout[3]).toMatchObject({ px: 80, py: 150 }); // dx sums widths of row 1 (board at (0,1)=80), dy sums heights of column 1 (board at (1,0)=150)
   });
 });
