@@ -1137,3 +1137,70 @@ img.module-tb-icon {
 .chart-image img {
   display: block;
 }
+
+/* BoardPicker "choose boards" dialog */
+.boardpicker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.boardpicker-dialog {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 12px;
+  max-width: 92vw;
+  max-height: 86vh;
+  overflow: auto;
+}
+.boardpicker-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.boardpicker-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.boardpicker-grid {
+  display: grid;
+  gap: 6px;
+}
+.boardpicker-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.boardpicker-slot select {
+  width: 100%;
+}
+.boardpicker-slot-extras {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+}
+.boardpicker-flip {
+  font-size: 12px;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.boardpicker-thumb {
+  max-width: 100%;
+  max-height: 64px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.boardpicker-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}

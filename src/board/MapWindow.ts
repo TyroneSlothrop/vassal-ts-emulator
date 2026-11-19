@@ -1,6 +1,7 @@
 import type { GamePiece } from "../model/piece";
 import { boardKey, cssColor, type BoardDef, type LosThreadDef, type SlotCategory, type StackMetricsDef } from "../vmod/buildfile";
 import type { HexGridModel } from "../vmod/hexgrid";
+import { computeTileLayout } from "../vmod/boardpicker";
 import type { ImageStore } from "./images";
 import { drawPiece, drawSelection, hitTestPiece, pieceHalfExtent, segmentIntersectsPiece } from "./render";
 
@@ -507,6 +508,20 @@ export class MapWindow {
     return this.cam.scale;
   }
 
+  /**
+   * World offset (incl. the map edge origin) of a named tile in the current
+   * composed board, or null if not placed / images not loaded yet.
+   */
+  tileWorldOffset(boardName: string): { x: number; y: number } | null {
+    const boardDef = this.currentBoardDef();
+    if (!boardDef?.tiles?.length) return null;
+    const layout = this.boardLayout(boardDef);
+    if (!layout) return null;
+    const i = boardDef.tiles!.findIndex((t) => t.boardName === boardName);
+    if (i < 0 || !layout.tiles[i]) return null;
+    return { x: this.boardOrigin.x + layout.tiles[i].x, y: this.boardOrigin.y + layout.tiles[i].y };
+  }
+
   /** World size of the current board (single image or composed tiles). */
   boardSize(): { width: number; height: number } | null {
     const size = this.boardWorldSize();
@@ -947,19 +962,20 @@ export class MapWindow {
     const loaded = boardDef.tiles?.map((tile) => ({ tile, image: this.images.get(tile.image) })).filter((t) => t.image) ?? [];
     if (!loaded.length || loaded.some((t) => !t.image!.loaded)) return null;
 
-    // Cropped tiles occupy their cropped footprint; cells size to the largest.
+    // Cropped tiles occupy their cropped footprint. Pixel origins follow Java
+    // Map.getLocation: cumulative per-row widths / per-column heights, so
+    // differently-sized sections join edge-to-edge without seams.
     const sized = loaded.map(({ tile, image }) => ({
       tile,
       image: image!,
       w: tile.crop && tile.crop.width > 0 ? Math.min(tile.crop.width, image!.width) : image!.width,
       h: tile.crop && tile.crop.height > 0 ? Math.min(tile.crop.height, image!.height) : image!.height,
     }));
-    const cellWidth = Math.max(...sized.map((t) => t.w));
-    const cellHeight = Math.max(...sized.map((t) => t.h));
-    const tiles = sized.map(({ tile, image, w, h }) => ({
+    const positioned = computeTileLayout(sized.map((s) => ({ x: s.tile.x, y: s.tile.y, w: s.w, h: s.h })));
+    const tiles = sized.map(({ tile, image, w, h }, i) => ({
       image,
-      x: tile.x * cellWidth,
-      y: tile.y * cellHeight,
+      x: positioned[i].px,
+      y: positioned[i].py,
       w,
       h,
       reversed: !!tile.reversed,

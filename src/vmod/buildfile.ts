@@ -116,6 +116,31 @@ export interface MapDef {
   zoomer?: ZoomerDef;
   /** Map-level GlobalMap (overview) definition, if declared. */
   globalMap?: GlobalMapDef;
+  /** Map `allowMultiple` — propagated to the BoardPicker (Map.java:520). */
+  allowMultiple?: boolean;
+  /** Stock BoardPicker declaration (title/buttons/slot geometry), if any. */
+  boardPicker?: BoardPickerDef;
+}
+
+/** Stock `VASSAL.build.module.map.BoardPicker` attributes (Java defaults). */
+export interface BoardPickerDef {
+  title: string;
+  boardPrompt: string;
+  addRowText: string;
+  addColumnText: string;
+  clearText: string;
+  slotWidth: number;
+  slotHeight: number;
+  slotScale: number;
+  maxColumns: number;
+  /** Map.allowMultiple — shows the add row/column/clear buttons. */
+  allowMultiple: boolean;
+  /**
+   * Java BoardPicker defaultSetup: raw text of the picker's `<setup>` child,
+   * an encoded SetBoards command that pre-places boards at fixed cells. When
+   * present, desktop VASSAL never prompts (isFinished() === true).
+   */
+  defaultSetup?: string;
 }
 
 export interface DrawPileDef {
@@ -754,10 +779,32 @@ function resolveTarget(palette: WidgetNode, target: string): WidgetNode | null {
 function parseMap(mapEl: Element): MapDef {
   const boards: BoardDef[] = [];
   const picker = firstChild(mapEl, T.boardPicker);
+  let boardPicker: BoardPickerDef | undefined;
   if (picker) {
     for (const b of Array.from(picker.getElementsByTagName(T.board))) {
       boards.push(parseBoard(b));
     }
+    const num = (attr: string, dflt: number): number => {
+      const n = Number.parseFloat(picker.getAttribute(attr) ?? "");
+      return Number.isFinite(n) ? n : dflt;
+    };
+    boardPicker = {
+      title: picker.getAttribute("title") || "Choose Boards",
+      boardPrompt: picker.getAttribute("boardPrompt") || "Select board",
+      addRowText: picker.getAttribute("addRowText") || "Add row",
+      addColumnText: picker.getAttribute("addColumnText") || "Add column",
+      clearText: "Clear",
+      slotWidth: num("slotWidth", 350),
+      slotHeight: num("slotHeight", 125),
+      slotScale: num("slotScale", 0.2),
+      maxColumns: Number.parseInt(picker.getAttribute("maxColumns") ?? "0", 10) || 0,
+      // Java: Map.allowMultiple is pushed into its BoardPicker (Map.java:520).
+      allowMultiple: mapEl.getAttribute("allowMultiple") === "true",
+    };
+    // Java BoardPicker.buildChild: the <setup> child holds the default
+    // SetBoards command (kept verbatim, tabs included).
+    const setupEl = Array.from(picker.children).find((c) => c.tagName === "setup");
+    if (setupEl?.textContent) boardPicker.defaultSetup = setupEl.textContent;
   }
   let layerOrder: string[] = [];
   const layered = mapEl.getElementsByTagName(T.layered)[0];
@@ -822,6 +869,8 @@ function parseMap(mapEl: Element): MapDef {
     losScale,
     edgeWidth,
     edgeHeight,
+    ...(mapEl.getAttribute("allowMultiple") === "true" ? { allowMultiple: true } : {}),
+    ...(boardPicker ? { boardPicker } : {}),
     ...(losThread ? { losThread } : {}),
     ...(stackMetrics ? { stackMetrics } : {}),
   };

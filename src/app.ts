@@ -12,13 +12,15 @@ import { drawFromDeck, instantiateDecks, shuffleDeck, type DeckState } from "./m
 import { setGlobalProperties } from "./model/globals";
 import { htmlLabelImage } from "./board/html-label";
 import { HexGridModel } from "./vmod/hexgrid";
-import { readVassalSave, writeVassalSave, type MapImportState } from "./vmod/vsav";
+import { readVassalSave, writeVassalSave, parseBoardPickerCommand, type MapImportState } from "./vmod/vsav";
 import { ImageStore, type ImageSource } from "./board/images";
 import { MapWindow, type PointerTool } from "./board/MapWindow";
 import { pieceHalfExtent, pieceShapeHalfExtent } from "./board/render";
 import { Palette } from "./ui/Palette";
 import { PiecePreview } from "./ui/PiecePreview";
 import { Toolbar } from "./ui/Toolbar";
+import { BoardPickerDialog } from "./ui/BoardPickerDialog";
+import { findOrCreatePickerBoard } from "./vmod/boardpicker";
 import { ContextMenu } from "./ui/ContextMenu";
 import { Chatter, type CardPreview } from "./ui/Chatter";
 import { WindowManager } from "./ui/wm/WindowManager";
@@ -183,10 +185,12 @@ class App {
         for (const slot of ss.slots) {
           try {
             const piece = buildPiece(slot.def);
-            // Java SetupStack.setup: position translates by the owning
-            // board's origin, which is the map's edge buffer.
-            piece.x = ss.x + (m.edgeWidth ?? 0);
-            piece.y = ss.y + (m.edgeHeight ?? 0);
+            // Java SetupStack.setup: the position is board-relative; the
+            // owning board's origin (or the map edge buffer) is added later
+            // in applyPendingBoardOffsets, once the board layout is known.
+            piece.x = ss.x;
+            piece.y = ss.y;
+            piece.setupBoard = ss.owningBoard ?? null;
             piece.mapId = m.name;
             piece.paletteCategory = slot.category ?? null;
             st.pieces.push(piece);
@@ -247,13 +251,17 @@ class App {
     if (window.innerWidth <= 860) app.classList.add("hide-left", "hide-right");
 
     const imgSource = this.imageSource();
-    this.images = new ImageStore(this.archives, () => this.map?.requestDraw());
+    this.images = new ImageStore(this.archives, () => {
+      this.map?.requestDraw();
+      this.applyPendingBoardOffsets();
+    });
 
     // Layout: toolbar on top, palette left, map right.
     this.currentMap = this.model.maps[0];
     this.toolbar = new Toolbar(this.model.maps, {
       onSelectMap: (m) => this.switchMap(m),
       onSelectBoard: (img) => this.setCurrentBoard(img || null),
+      onOpenBoardPicker: () => this.openBoardPicker(),
       onSelectScenario: (file) => this.applyScenario(file),
       onSetInteractionLayer: (layer) => this.map.setInteractionLayer(layer),
       onSetPointerTool: (tool) => this.map.setPointerTool(tool),
@@ -393,7 +401,24 @@ class App {
       if (defaultBoard) break;
     }
     if (!defaultBoard && boards.length === 1 && !boards[0].reversible) defaultBoard = boards[0];
-    if (defaultBoard) this.toolbar.selectBoardByName(defaultBoard.name);
+    // Java BoardPicker.getDefaultSetup(): a <setup> command inside the picker
+    // pre-places the boards at fixed cells, so the game-start prompt is
+    // skipped (isFinished() === true) — apply it instead of opening the dialog.
+    if (!defaultBoard && this.currentMap.boardPicker?.defaultSetup) {
+      const parsed = parseBoardPickerCommand(this.currentMap.boardPicker.defaultSetup);
+      const fixed = parsed ? findOrCreatePickerBoard(this.currentMap, parsed.tiles) : null;
+      if (fixed) defaultBoard = fixed;
+    }
+    if (defaultBoard) {
+      // The composed default board may not be in the dropdown yet.
+      this.toolbar.setBoards(this.currentMap);
+      this.toolbar.selectBoardByName(defaultBoard.name);
+    }
+    // Java BoardPicker.setup(true): with no default setup and several
+    // possible boards, prompt for the board grid at game start.
+    else if (this.currentMap.boardPicker && boards.length > 1) {
+      queueMicrotask(() => this.openBoardPicker());
+    }
 
     // Debug hook for automated verification (harmless in production).
     (window as unknown as { __vb: unknown }).__vb = {
@@ -755,6 +780,7 @@ class App {
     this.map.setPieces(state.pieces);
     this.map.setBoard(state.boardImage);
     this.applyBoardGrid(state.boardImage);
+    this.applyPendingBoardOffsets();
     this.refreshDecks();
     // A save import can select a lazy board archive that was never fetched.
     const board = state.boardImage ? m.boards.find((b) => boardKey(b) === state.boardImage) : null;
@@ -775,8 +801,73 @@ class App {
     const state = this.stateFor(this.currentMap);
     state.boardImage = imageName;
     this.toolbar.setBoardImage(imageName);
+    // Composed picker boards are appended to map.boards after buildUI ran
+    // setBoardDefs, so refresh the window's board lookup before setBoard.
+    this.map.setBoardDefs(this.currentMap.boards);
     this.map.setBoard(imageName);
     this.applyBoardGrid(imageName);
+    this.applyPendingBoardOffsets();
+  }
+
+  /**
+   * Java SetupStack.setup: translate each setup piece by its owning board's
+   * origin in the current composed layout (map edge buffer when the stack has
+   * no owning board). Runs when the board changes and as board images load
+   * (tile pixel offsets need the loaded image sizes).
+   */
+  private applyPendingBoardOffsets(): void {
+    const m = this.currentMap;
+    const st = this.stateFor(m);
+    const board = st.boardImage ? m.boards.find((b) => boardKey(b) === st.boardImage) : null;
+    if (!board) return;
+    let changed = false;
+    for (const p of st.pieces) {
+      if (p.boardOffsetApplied || p.setupBoard === undefined) continue;
+      let ox = m.edgeWidth ?? 0;
+      let oy = m.edgeHeight ?? 0;
+      if (p.setupBoard && board.tiles?.length) {
+        const t = this.map.tileWorldOffset(p.setupBoard);
+        if (!t) continue; // board images not loaded yet; retried on image load
+        ox = t.x;
+        oy = t.y;
+      }
+      p.x += ox;
+      p.y += oy;
+      p.boardOffsetApplied = true;
+      changed = true;
+    }
+    if (changed) this.map.requestDraw();
+  }
+
+  /**
+   * Open the stock BoardPicker grid dialog for the current map: pick several
+   * boards into cells (add row/column), flip reversible ones, OK composes
+   * them into one multi-board layout (same rendering as a saved layout).
+   */
+  private openBoardPicker(): void {
+    const map = this.currentMap;
+    const def = map.boardPicker;
+    if (!def) return;
+    const state = this.stateFor(map);
+    const cur = state.boardImage ? map.boards.find((b) => boardKey(b) === state.boardImage) : null;
+    const initial = cur?.tiles
+      ? cur.tiles.map((t) => ({ boardName: t.boardName, x: t.x, y: t.y, reversed: !!t.reversed }))
+      : null;
+    BoardPickerDialog.open(def, map, initial, {
+      onApply: (tiles) => {
+        if (!tiles.length) {
+          this.setCurrentBoard(null);
+          this.chatter.add("Boards cleared.");
+          return;
+        }
+        const board = findOrCreatePickerBoard(map, tiles);
+        if (!board) return;
+        this.toolbar.setBoards(map);
+        this.setCurrentBoard(boardKey(board));
+        this.chatter.add(`Boards: ${tiles.map((t) => t.boardName).join(", ")}`);
+      },
+      onCancel: () => {},
+    }, (entry) => this.imageSource().imageUrl(entry));
   }
 
   /** Attach the active board's hex grid, if any, to the map window. */

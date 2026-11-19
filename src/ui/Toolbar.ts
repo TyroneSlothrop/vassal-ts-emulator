@@ -4,6 +4,8 @@ import type { InteractionLayer, PointerTool } from "../board/MapWindow";
 export interface ToolbarCallbacks {
   onSelectMap: (map: MapDef) => void;
   onSelectBoard: (board: string) => void;
+  /** Open the stock BoardPicker "choose boards" grid dialog. */
+  onOpenBoardPicker: () => void;
   /** A predefined-setup scenario was picked (value = its file name). */
   onSelectScenario: (file: string) => void;
   onSetInteractionLayer: (layer: InteractionLayer) => void;
@@ -29,6 +31,7 @@ export class Toolbar {
   readonly el: HTMLElement;
   private mapSelect: HTMLSelectElement;
   private boardSelect: HTMLSelectElement;
+  private pickerBtn: HTMLButtonElement;
   private scenarioSelect: HTMLSelectElement;
   private scenarioWrap: HTMLElement;
   private focusSelect: HTMLSelectElement;
@@ -70,6 +73,12 @@ export class Toolbar {
     this.boardSelect.title = "Board / terrain";
     this.boardSelect.addEventListener("change", () => this.cb.onSelectBoard(this.boardSelect.value));
     this.el.appendChild(labelled("Board", this.boardSelect));
+    // Stock BoardPicker dialog (choose several boards on a grid), when the
+    // map declares one.
+    this.pickerBtn = button("🗺", () => this.cb.onOpenBoardPicker());
+    this.pickerBtn.title = "Choose boards…";
+    this.pickerBtn.style.display = "none";
+    this.el.appendChild(this.pickerBtn);
 
     // Predefined-setup scenarios (module "New Game" setups); hidden when the
     // module declares none.
@@ -204,6 +213,8 @@ export class Toolbar {
       opt.textContent = b.name;
       this.boardSelect.appendChild(opt);
     }
+    this.pickerBtn.style.display = map.boardPicker ? "" : "none";
+    if (map.boardPicker) this.pickerBtn.title = `${map.boardPicker.title}…`;
   }
 
   setCurrentMap(name: string): void {

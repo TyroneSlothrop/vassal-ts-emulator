@@ -1,5 +1,5 @@
 import { unzipSync, zipSync } from "fflate";
-import type { BoardDef, MapDef, ModuleModel, SlotCategory } from "./buildfile";
+import type { BoardDef, BoardTileDef, MapDef, ModuleModel, SlotCategory } from "./buildfile";
 import { boardKey } from "./buildfile";
 import { buildPieceFromTypeState, encodeStateChain, splitChain, typeId } from "./piece-type";
 import { SequenceDecoder, SequenceEncoder, TYPE_DELIM } from "./sequence";
@@ -484,9 +484,14 @@ function encodeBoardPicker(map: MapDef, boardImage: string): string | null {
     return "bd\t" + board.tiles.map((t) => `${t.x}\t${t.y}\t${t.reversed ? "r" : ""}${t.boardName}\t`).join("bd\t");
   }
   const enc = new SequenceEncoder("\t", `${map.name}BoardPicker`);
-  const tiles = board.tiles?.length ? board.tiles : [{ boardName: board.name, x: 0, y: 0 }];
+  const tiles: BoardTileDef[] = board.tiles?.length
+    ? board.tiles
+    : [{ boardName: board.name, image: board.image, x: 0, y: 0, reversed: false }];
   for (const tile of tiles) {
-    enc.append(tile.boardName).append(tile.x).append(tile.y);
+    // Java: SequenceEncoder(name, '/') + append("rev") when reversed.
+    const name = new SequenceEncoder("/", tile.boardName);
+    if (tile.reversed) name.append("rev");
+    enc.append(name.getValue()).append(tile.x).append(tile.y);
   }
   return enc.getValue();
 }
@@ -505,9 +510,15 @@ function findOrCreateComposedBoard(map: MapDef, parsed: ParsedBoardPickerCommand
     .map((tile) => {
       const board = map.boards.find((b) => b.name === tile.boardName);
       if (!board?.image) return null;
-      return { boardName: tile.boardName, image: board.image, x: tile.x, y: tile.y };
+      return {
+        boardName: tile.boardName,
+        image: board.image,
+        x: tile.x,
+        y: tile.y,
+        ...(tile.reversed ? { reversed: true } : {}),
+      };
     })
-    .filter((tile): tile is { boardName: string; image: string; x: number; y: number } => tile != null);
+    .filter((tile): tile is { boardName: string; image: string; x: number; y: number; reversed?: boolean } => tile != null);
 
   const board: BoardDef = {
     id,
