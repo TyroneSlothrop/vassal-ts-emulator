@@ -795,6 +795,9 @@ class App {
     const state = this.stateFor(this.currentMap);
     state.boardImage = imageName;
     this.toolbar.setBoardImage(imageName);
+    // Composed picker boards are appended to map.boards after buildUI ran
+    // setBoardDefs, so refresh the window's board lookup before setBoard.
+    this.map.setBoardDefs(this.currentMap.boards);
     this.map.setBoard(imageName);
     this.applyBoardGrid(imageName);
   }
