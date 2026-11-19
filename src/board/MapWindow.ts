@@ -508,6 +508,20 @@ export class MapWindow {
     return this.cam.scale;
   }
 
+  /**
+   * World offset (incl. the map edge origin) of a named tile in the current
+   * composed board, or null if not placed / images not loaded yet.
+   */
+  tileWorldOffset(boardName: string): { x: number; y: number } | null {
+    const boardDef = this.currentBoardDef();
+    if (!boardDef?.tiles?.length) return null;
+    const layout = this.boardLayout(boardDef);
+    if (!layout) return null;
+    const i = boardDef.tiles!.findIndex((t) => t.boardName === boardName);
+    if (i < 0 || !layout.tiles[i]) return null;
+    return { x: this.boardOrigin.x + layout.tiles[i].x, y: this.boardOrigin.y + layout.tiles[i].y };
+  }
+
   /** World size of the current board (single image or composed tiles). */
   boardSize(): { width: number; height: number } | null {
     const size = this.boardWorldSize();

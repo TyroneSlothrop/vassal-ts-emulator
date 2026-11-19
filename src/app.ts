@@ -185,10 +185,12 @@ class App {
         for (const slot of ss.slots) {
           try {
             const piece = buildPiece(slot.def);
-            // Java SetupStack.setup: position translates by the owning
-            // board's origin, which is the map's edge buffer.
-            piece.x = ss.x + (m.edgeWidth ?? 0);
-            piece.y = ss.y + (m.edgeHeight ?? 0);
+            // Java SetupStack.setup: the position is board-relative; the
+            // owning board's origin (or the map edge buffer) is added later
+            // in applyPendingBoardOffsets, once the board layout is known.
+            piece.x = ss.x;
+            piece.y = ss.y;
+            piece.setupBoard = ss.owningBoard ?? null;
             piece.mapId = m.name;
             piece.paletteCategory = slot.category ?? null;
             st.pieces.push(piece);
@@ -249,7 +251,10 @@ class App {
     if (window.innerWidth <= 860) app.classList.add("hide-left", "hide-right");
 
     const imgSource = this.imageSource();
-    this.images = new ImageStore(this.archives, () => this.map?.requestDraw());
+    this.images = new ImageStore(this.archives, () => {
+      this.map?.requestDraw();
+      this.applyPendingBoardOffsets();
+    });
 
     // Layout: toolbar on top, palette left, map right.
     this.currentMap = this.model.maps[0];
@@ -775,6 +780,7 @@ class App {
     this.map.setPieces(state.pieces);
     this.map.setBoard(state.boardImage);
     this.applyBoardGrid(state.boardImage);
+    this.applyPendingBoardOffsets();
     this.refreshDecks();
     // A save import can select a lazy board archive that was never fetched.
     const board = state.boardImage ? m.boards.find((b) => boardKey(b) === state.boardImage) : null;
@@ -800,6 +806,37 @@ class App {
     this.map.setBoardDefs(this.currentMap.boards);
     this.map.setBoard(imageName);
     this.applyBoardGrid(imageName);
+    this.applyPendingBoardOffsets();
+  }
+
+  /**
+   * Java SetupStack.setup: translate each setup piece by its owning board's
+   * origin in the current composed layout (map edge buffer when the stack has
+   * no owning board). Runs when the board changes and as board images load
+   * (tile pixel offsets need the loaded image sizes).
+   */
+  private applyPendingBoardOffsets(): void {
+    const m = this.currentMap;
+    const st = this.stateFor(m);
+    const board = st.boardImage ? m.boards.find((b) => boardKey(b) === st.boardImage) : null;
+    if (!board) return;
+    let changed = false;
+    for (const p of st.pieces) {
+      if (p.boardOffsetApplied || p.setupBoard === undefined) continue;
+      let ox = m.edgeWidth ?? 0;
+      let oy = m.edgeHeight ?? 0;
+      if (p.setupBoard && board.tiles?.length) {
+        const t = this.map.tileWorldOffset(p.setupBoard);
+        if (!t) continue; // board images not loaded yet; retried on image load
+        ox = t.x;
+        oy = t.y;
+      }
+      p.x += ox;
+      p.y += oy;
+      p.boardOffsetApplied = true;
+      changed = true;
+    }
+    if (changed) this.map.requestDraw();
   }
 
   /**

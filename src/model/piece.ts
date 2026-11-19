@@ -130,6 +130,9 @@ export class GamePiece {
   paletteCategory: SlotCategory | null = null;
   x = 0;
   y = 0;
+  /** SetupStack owningBoard, resolved to a world offset once the board layout loads. */
+  setupBoard: string | null = null;
+  boardOffsetApplied = false;
   /** User lock: prevents dragging even if the trait chain allows it. */
   userLocked = false;
   /** Set by Delete/Clone traits; the board consumes these after a command. */
