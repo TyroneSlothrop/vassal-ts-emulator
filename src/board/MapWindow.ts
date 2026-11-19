@@ -1,5 +1,7 @@
-import type { GamePiece } from "../model/piece";
-import { boardKey, cssColor, type BoardDef, type LosThreadDef, type SlotCategory, type StackMetricsDef } from "../vmod/buildfile";
+import { stackAtPosition, type GamePiece } from "../model/piece";
+import { matchesEvent, parseKeyStroke } from "../model/keystroke";
+import { renderPieceToCanvas } from "./piece-preview";
+import { boardKey, cssColor, type BoardDef, type DetailViewerDef, type LosThreadDef, type SlotCategory, type StackMetricsDef } from "../vmod/buildfile";
 import type { HexGridModel } from "../vmod/hexgrid";
 import type { ImageStore } from "./images";
 import { drawPiece, drawSelection, hitTestPiece, pieceHalfExtent, segmentIntersectsPiece } from "./render";
@@ -90,6 +92,11 @@ export class MapWindow {
   private losScale = 0;
   private losThread: LosThreadDef | null = null;
   private stackMetrics: StackMetricsDef | null = null;
+  /** Map-level CounterDetailViewer config (hover stack inspector). */
+  private detailViewer: DetailViewerDef | null = null;
+  private hoverTimer: ReturnType<typeof setTimeout> | null = null;
+  private hoverWorld: { x: number; y: number } | null = null;
+  private detailPopup: HTMLElement | null = null;
   /** Map edge buffer: boards + board-relative grids anchor here. */
   private boardOrigin = { x: 0, y: 0 };
   private hexGrid: HexGridModel | null = null;
@@ -144,6 +151,12 @@ export class MapWindow {
   /** Adopt the map's StackMetrics (visual cascade for co-located pieces). */
   setStackMetrics(def: StackMetricsDef | null): void {
     this.stackMetrics = def;
+  }
+
+  /** Adopt the map's CounterDetailViewer declaration, if any. */
+  setDetailViewer(def: DetailViewerDef | null): void {
+    this.detailViewer = def;
+    this.hideDetailPopup();
     this.requestDraw();
   }
 
@@ -992,10 +1005,18 @@ export class MapWindow {
     c.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
     c.addEventListener("contextmenu", (e) => this.onContextMenu(e));
     window.addEventListener("pointermove", (e) => this.onPointerMove(e));
+    window.addEventListener("pointermove", (e) => this.onHoverMove(e));
     window.addEventListener("pointerup", (e) => this.onPointerUp(e));
     window.addEventListener("pointercancel", (e) => this.onPointerUp(e));
+    c.addEventListener("pointerleave", () => this.onHoverLeave());
     window.addEventListener("keydown", (e) => {
       if (e.code === "Space" && !isTypingTarget(e.target)) this.spacePan = true;
+      // CounterDetailViewer hotkey (e.g. "32,130") toggles the stack popup.
+      const hk = this.detailViewer?.hotkey ? parseKeyStroke(this.detailViewer.hotkey) : null;
+      if (hk && this.mode === "idle" && matchesEvent(hk, e)) {
+        e.preventDefault();
+        this.toggleDetailAtHover();
+      }
     });
     window.addEventListener("keyup", (e) => {
       if (e.code === "Space") this.spacePan = false;
@@ -1036,6 +1057,7 @@ export class MapWindow {
 
   private onPointerDown(e: PointerEvent): void {
     if (e.button === 2) return;
+    this.hideDetailPopup();
     try {
       this.canvas.setPointerCapture(e.pointerId);
     } catch {
@@ -1117,6 +1139,104 @@ export class MapWindow {
       this.clearLongPress();
       this.requestDraw();
     }
+  }
+
+  // ---- CounterDetailViewer (hover stack inspector) -------------------------
+
+  private onHoverMove(e: PointerEvent): void {
+    if (!this.detailViewer || e.buttons !== 0 || this.mode !== "idle") return;
+    const p = this.localXY(e);
+    const r = this.canvas.getBoundingClientRect();
+    if (p.x < 0 || p.y < 0 || p.x > r.width || p.y > r.height) {
+      this.onHoverLeave();
+      return;
+    }
+    const world = this.screenToWorld(p.x, p.y);
+    const hit = this.topPieceAt(world.x, world.y);
+    if (!hit) {
+      this.onHoverLeave();
+      return;
+    }
+    // Re-arm the delay only when the hovered stack changes.
+    if (!this.hoverWorld || this.hoverWorld.x !== hit.x || this.hoverWorld.y !== hit.y) {
+      this.hoverWorld = { x: hit.x, y: hit.y };
+      this.clearHoverTimer();
+      const stack = stackAtPosition(this.pieces, hit.x, hit.y);
+      if (stack.length >= Math.max(1, this.detailViewer.minDisplayPieces)) {
+        this.hoverTimer = setTimeout(() => this.showDetailPopup(stack, e.clientX, e.clientY), this.detailViewer.delay);
+      }
+    }
+  }
+
+  private onHoverLeave(): void {
+    this.clearHoverTimer();
+    this.hoverWorld = null;
+    this.hideDetailPopup();
+  }
+
+  private clearHoverTimer(): void {
+    if (this.hoverTimer != null) {
+      clearTimeout(this.hoverTimer);
+      this.hoverTimer = null;
+    }
+  }
+
+  private toggleDetailAtHover(): void {
+    if (this.detailPopup) {
+      this.hideDetailPopup();
+      return;
+    }
+    if (!this.detailViewer || !this.hoverWorld) return;
+    const hit = this.topPieceAt(this.hoverWorld.x, this.hoverWorld.y);
+    if (!hit) return;
+    const stack = stackAtPosition(this.pieces, hit.x, hit.y);
+    const r = this.canvas.getBoundingClientRect();
+    this.showDetailPopup(stack, r.left + r.width / 2, r.top + 80);
+  }
+
+  /** Draw every piece of the hovered stack in a floating popup near (cx, cy). */
+  private showDetailPopup(stack: GamePiece[], cx: number, cy: number): void {
+    const def = this.detailViewer;
+    if (!def || !stack.length) return;
+    this.hideDetailPopup();
+    const pop = document.createElement("div");
+    pop.className = "detail-popup";
+    pop.style.background = def.bgColor;
+    pop.style.color = def.fgColor;
+    pop.style.borderColor = def.fgColor;
+    const cellSize = Math.max(36, Math.min(120, Math.round(64 * def.zoomLevel)));
+    for (const piece of stack) {
+      const cell = document.createElement("div");
+      cell.className = "detail-cell";
+      if (def.showGraph) {
+        const cv = document.createElement("canvas");
+        renderPieceToCanvas(cv, piece, this.images, { size: cellSize });
+        cell.appendChild(cv);
+      }
+      if (def.showText) {
+        const label = document.createElement("div");
+        label.className = "detail-name";
+        label.textContent = piece.name();
+        label.style.fontSize = `${def.fontSize}px`;
+        label.style.color = def.fgColor;
+        cell.appendChild(label);
+      }
+      pop.appendChild(cell);
+    }
+    document.body.appendChild(pop);
+    // Clamp into the viewport, offset from the cursor.
+    const pad = 18;
+    const w = pop.offsetWidth;
+    const h = pop.offsetHeight;
+    pop.style.left = `${Math.max(4, Math.min(window.innerWidth - w - 4, cx + pad))}px`;
+    pop.style.top = `${Math.max(4, Math.min(window.innerHeight - h - 4, cy + pad))}px`;
+    this.detailPopup = pop;
+  }
+
+  private hideDetailPopup(): void {
+    this.clearHoverTimer();
+    this.detailPopup?.remove();
+    this.detailPopup = null;
   }
 
   private onPointerMove(e: PointerEvent): void {

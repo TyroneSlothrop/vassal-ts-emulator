@@ -338,3 +338,8 @@ function strokeKey(stroke: KeyStroke | null): string {
   if (!stroke) return "";
   return `${stroke.code}:${stroke.ctrl ? 1 : 0}:${stroke.shift ? 1 : 0}:${stroke.alt ? 1 : 0}:${stroke.meta ? 1 : 0}:${stroke.name ?? ""}`;
 }
+
+/** Pieces sharing the same (snapped) position — a VASSAL Stack. */
+export function stackAtPosition(pieces: GamePiece[], x: number, y: number): GamePiece[] {
+  return pieces.filter((p) => p.x === x && p.y === y);
+}
